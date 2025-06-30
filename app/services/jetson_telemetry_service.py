@@ -1,3 +1,4 @@
+# app/services/jetson_telemetry_service.py
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any, List
@@ -63,17 +64,33 @@ class JetsonTelemetryService:
         elif 'timestamp_telemetry' not in telemetry_data:
             telemetry_data['timestamp_telemetry'] = datetime.utcnow()
 
-        # Convert numeric fields
+        # Define the expected fields for JetsonTelemetry model
+        expected_telemetry_fields = [
+            'id_hardware_jetson',
+            'timestamp_telemetry',
+            'ram_usage_gb',
+            'cpu_usage_percent',
+            'disk_usage_gb',
+            'disk_usage_percent',
+            'temperatura_celsius'
+        ]
+
+        # Filter telemetry_data to only include expected fields
+        filtered_telemetry_data = {
+            key: telemetry_data[key] for key in expected_telemetry_fields if key in telemetry_data
+        }
+
+        # Convert numeric fields in the filtered data
         for field in ['ram_usage_gb', 'cpu_usage_percent', 'disk_usage_gb', 'disk_usage_percent', 'temperatura_celsius']:
-            if field in telemetry_data and isinstance(telemetry_data[field], str):
+            if field in filtered_telemetry_data and isinstance(filtered_telemetry_data[field], str):
                 try:
-                    telemetry_data[field] = float(telemetry_data[field])
+                    filtered_telemetry_data[field] = float(filtered_telemetry_data[field])
                 except ValueError:
-                    telemetry_data[field] = None # Set to None if conversion fails
+                    filtered_telemetry_data[field] = None # Set to None if conversion fails
 
         try:
-            # Create the new telemetry record
-            new_telemetry_record = jetson_telemetry_crud.create(db, telemetry_data)
+            # Create the new telemetry record using the filtered data
+            new_telemetry_record = jetson_telemetry_crud.create(db, filtered_telemetry_data)
 
             # Update the last_telemetry_at in the JetsonNano device
             jetson_device = jetson_nano_crud.get_by_hardware_id(db, id_hardware_jetson)

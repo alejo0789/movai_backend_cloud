@@ -270,7 +270,7 @@ class Alerta(Base):
     evento = relationship("Evento", back_populates="alerta")
     sesion_conduccion = relationship("SesionConduccion", back_populates="alertas")
 
-    gestionada_por_usuario = relationship("Usuario", back_populates="alertas_gestionadas")
+    gestionada_por_usuario = relationship("Usuario", back_populates="alertas_gestionadas_rel") # Corrected back_populates
 
     def __repr__(self):
         return (f"<Alerta(id='{self.id}', tipo='{self.tipo_alerta}', criticidad='{self.nivel_criticidad}', "
@@ -299,7 +299,7 @@ class VideoEntrenamiento(Base):
 class ImagenEntrenamiento(Base):
     __tablename__ = 'imagenes_entrenamiento'
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True, nullable=False)
-    id_video_entrenamiento = Column(UUID(as_uuid=True), ForeignKey('videos_entrenamiento.id'), nullable=False) # <<<<< CORREGIDO DE as_ass_uuid a as_uuid
+    id_video_entrenamiento = Column(UUID(as_uuid=True), ForeignKey('videos_entrenamiento.id'), nullable=False) 
     url_imagen = Column(String, nullable=False) 
     timestamp_en_video_seg = Column(Numeric) 
     es_principal = Column(Boolean, default=False, nullable=False) 
@@ -328,10 +328,10 @@ class Usuario(Base):
 
     # Relaciones
     empresa = relationship("Empresa", back_populates="usuarios") 
-    alertas_gestionadas = relationship("Alerta", back_populates="alertas_gestionadas") 
+    alertas_gestionadas_rel = relationship("Alerta", back_populates="gestionada_por_usuario") # Corrected back_populates
 
     def __repr__(self):
         return f"<Usuario(id='{self.id}', username='{self.username}', rol='{self.rol}')>"
 
-# Para la relación de Alerta con Usuario (gestión)
-Alerta.gestionada_por_usuario = relationship("Usuario", back_populates="alertas_gestionadas")
+# REMOVED: Redundant relationship definition, already defined within Alerta class
+# Alerta.gestionada_por_usuario = relationship("Usuario", back_populates="alertas_gestionadas")

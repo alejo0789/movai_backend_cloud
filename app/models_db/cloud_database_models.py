@@ -1,3 +1,4 @@
+# app/models_db/cloud_database_models.py
 import uuid
 from datetime import datetime, date
 from sqlalchemy import Column, String, Integer, DateTime, Date, Boolean, Numeric, ForeignKey, Text, JSON
@@ -151,11 +152,7 @@ class JetsonNano(Base):
     estado_salud = Column(String, default='Desconocido', nullable=False) 
     ultima_actualizacion_firmware_at = Column(DateTime)
     ultima_conexion_cloud_at = Column(DateTime) 
-    ram_usage_gb = Column(Numeric) 
-    cpu_usage_percent = Column(Numeric) 
-    disk_usage_gb = Column(Numeric) 
-    temperatura_celsius = Column(Numeric) 
-    last_telemetry_at = Column(DateTime) 
+    last_telemetry_at = Column(DateTime) # Keep this to track last telemetry arrival
     fecha_instalacion = Column(DateTime, default=datetime.utcnow)
     activo = Column(Boolean, default=True)
     observaciones = Column(Text)
@@ -163,10 +160,30 @@ class JetsonNano(Base):
 
     # Relaciones
     bus = relationship("Bus", back_populates="jetson_nano_device") 
+    telemetry_data = relationship("JetsonTelemetry", back_populates="jetson_device") # New relationship
 
     def __repr__(self):
         return (f"<JetsonNano(id='{self.id}', hardware_id='{self.id_hardware_jetson}', "
                 f"estado='{self.estado_salud}', bus_id='{self.id_bus}')>")
+
+class JetsonTelemetry(Base): # NEW TABLE
+    __tablename__ = 'jetson_telemetry'
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True, nullable=False)
+    id_hardware_jetson = Column(String, ForeignKey('jetson_nanos.id_hardware_jetson'), nullable=False) # Link to JetsonNano by its hardware ID
+    timestamp_telemetry = Column(DateTime, default=datetime.utcnow, nullable=False)
+    ram_usage_gb = Column(Numeric)
+    cpu_usage_percent = Column(Numeric)
+    disk_usage_gb = Column(Numeric)
+    disk_usage_percent = Column(Numeric)
+    temperatura_celsius = Column(Numeric)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationship to JetsonNano (one-to-many, a JetsonNano can have many telemetry records)
+    jetson_device = relationship("JetsonNano", back_populates="telemetry_data")
+
+    def __repr__(self):
+        return (f"<JetsonTelemetry(id='{self.id}', hardware_id='{self.id_hardware_jetson}', "
+                f"timestamp='{self.timestamp_telemetry}', cpu='{self.cpu_usage_percent}')>")
 
 # --- Datos Transaccionales (Cloud) ---
 
@@ -311,7 +328,7 @@ class Usuario(Base):
 
     # Relaciones
     empresa = relationship("Empresa", back_populates="usuarios") 
-    alertas_gestionadas = relationship("Alerta", back_populates="gestionada_por_usuario") 
+    alertas_gestionadas = relationship("Alerta", back_populates="alertas_gestionadas") 
 
     def __repr__(self):
         return f"<Usuario(id='{self.id}', username='{self.username}', rol='{self.rol}')>"

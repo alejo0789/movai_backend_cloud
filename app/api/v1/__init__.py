@@ -35,8 +35,8 @@ def create_v1_blueprint() -> Blueprint:
     # Endpoints para la gestión de Datos de Entrenamiento (Videos/Imágenes)
     from app.api.v1.endpoints import videos_images 
     v1_bp.register_blueprint(videos_images.training_data_bp, url_prefix='/training-data') 
-    # from app.api.v1.endpoints import jetson_nanos
-    # v1_bp.register_blueprint(jetson_nanos.jetson_nanos_bp, url_prefix='/jetson-nanos')
+    from app.api.v1.endpoints import jetson_nanos
+    v1_bp.register_blueprint(jetson_nanos.jetson_nanos_bp, url_prefix='/jetson-nanos')
     # from app.api.v1.endpoints import reports
     # v1_bp.register_blueprint(reports.reports_bp, url_prefix='/reports')
 

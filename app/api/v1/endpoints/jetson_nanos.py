@@ -3,11 +3,16 @@ import logging
 from flask import Blueprint, request, jsonify
 from sqlalchemy.exc import IntegrityError
 import uuid
+from datetime import datetime
 
 # Import database session and services
 from app.config.database import db 
 from app.services.jetson_telemetry_service import jetson_telemetry_service
-from app.services.jetson_nano_service import jetson_nano_service # Assuming you'll create this service soon
+# CORRECTED IMPORTS: Importing the instance of CRUDJetsonNano
+from app.crud.crud_jetson_nano import jetson_nano_crud 
+# Importing create_or_update_jetson_nano from jetson_nano_service as it exists there
+from app.services.jetson_nano_service import create_or_update_jetson_nano 
+
 from app.models_db.cloud_database_models import JetsonNano, JetsonTelemetry
 
 # Setup logger for this module
@@ -28,7 +33,6 @@ def receive_jetson_telemetry():
     Endpoint to receive telemetry data from a Jetson Nano device.
     Expects a JSON payload with telemetry metrics.
     """
-    db = next(get_db()) # Get a database session
     try:
         telemetry_data = request.get_json()
         if not telemetry_data:
@@ -36,7 +40,7 @@ def receive_jetson_telemetry():
             return jsonify({"message": "Invalid JSON data provided"}), 400
 
         # Process the telemetry data using the service layer
-        processed_telemetry = jetson_telemetry_service.process_telemetry_data(db, telemetry_data)
+        processed_telemetry = jetson_telemetry_service.process_telemetry_data(db.session, telemetry_data)
 
         if processed_telemetry:
             return jsonify({
@@ -49,10 +53,8 @@ def receive_jetson_telemetry():
             return jsonify({"message": "Failed to process telemetry data"}), 500
     except Exception as e:
         logger.exception("Error receiving or processing Jetson telemetry data.")
-        db.rollback() # Rollback in case of an error
+        db.session.rollback()
         return jsonify({"message": f"Internal server error: {str(e)}"}), 500
-    finally:
-        db.close() # Close the database session
 
 @jetson_nanos_bp.route('/', methods=['POST'])
 def register_jetson_nano():
@@ -60,14 +62,37 @@ def register_jetson_nano():
     Endpoint to register a new Jetson Nano device.
     Expects a JSON payload with Jetson Nano details.
     """
-    db = next(get_db())
     try:
         jetson_data = request.get_json()
         if not jetson_data:
             return jsonify({"message": "Invalid JSON data provided"}), 400
 
-        # Use the jetson_nano_service to create the device
-        new_jetson = jetson_nano_service.create_jetson_nano(db, jetson_data)
+        # Ensure id_bus is a valid UUID if provided
+        id_bus_val = None
+        if 'id_bus' in jetson_data and jetson_data['id_bus']:
+            try:
+                id_bus_val = uuid.UUID(jetson_data['id_bus'])
+            except ValueError:
+                return jsonify({"message": "Invalid UUID format for id_bus"}), 400
+        
+        # Ensure fecha_instalacion is a valid datetime if provided
+        fecha_instalacion_val = None
+        if 'fecha_instalacion' in jetson_data and jetson_data['fecha_instalacion']:
+            try:
+                fecha_instalacion_val = datetime.fromisoformat(jetson_data['fecha_instalacion'])
+            except ValueError:
+                return jsonify({"message": "Invalid datetime format for fecha_instalacion"}), 400
+
+        new_jetson = create_or_update_jetson_nano(
+            db.session, 
+            id_hardware_jetson=jetson_data.get('id_hardware_jetson'),
+            id_bus=id_bus_val,
+            version_firmware=jetson_data.get('version_firmware'),
+            estado_salud=jetson_data.get('estado_salud'),
+            fecha_instalacion=fecha_instalacion_val,
+            activo=jetson_data.get('activo', True),
+            observaciones=jetson_data.get('observaciones')
+        )
 
         if new_jetson:
             return jsonify({
@@ -78,23 +103,21 @@ def register_jetson_nano():
         else:
             return jsonify({"message": "Failed to register Jetson Nano"}), 500
     except IntegrityError:
-        db.rollback()
+        db.session.rollback()
         return jsonify({"message": "Jetson Nano with this hardware ID already exists or invalid data"}), 409
     except Exception as e:
         logger.exception("Error registering Jetson Nano device.")
-        db.rollback()
+        db.session.rollback()
         return jsonify({"message": f"Internal server error: {str(e)}"}), 500
-    finally:
-        db.close()
 
 @jetson_nanos_bp.route('/<string:id_hardware_jetson>', methods=['GET'])
 def get_jetson_nano_details(id_hardware_jetson: str):
     """
     Endpoint to retrieve details of a specific Jetson Nano device by its hardware ID.
     """
-    db = next(get_db())
     try:
-        jetson = jetson_nano_service.get_jetson_nano_by_hardware_id(db, id_hardware_jetson)
+        # CORRECTED: Using the jetson_nano_crud instance
+        jetson = jetson_nano_crud.get_by_hardware_id(db.session, id_hardware_jetson) 
         if jetson:
             return jsonify({
                 "id": str(jetson.id),
@@ -115,21 +138,25 @@ def get_jetson_nano_details(id_hardware_jetson: str):
     except Exception as e:
         logger.exception(f"Error retrieving Jetson Nano details for hardware ID: {id_hardware_jetson}")
         return jsonify({"message": f"Internal server error: {str(e)}"}), 500
-    finally:
-        db.close()
 
 @jetson_nanos_bp.route('/<string:id_hardware_jetson>', methods=['PUT'])
 def update_jetson_nano_details(id_hardware_jetson: str):
     """
     Endpoint to update details of an existing Jetson Nano device.
     """
-    db = next(get_db())
     try:
         update_data = request.get_json()
         if not update_data:
             return jsonify({"message": "Invalid JSON data provided"}), 400
 
-        updated_jetson = jetson_nano_service.update_jetson_nano(db, id_hardware_jetson, update_data)
+        # Fetch the existing JetsonNano object
+        jetson = jetson_nano_crud.get_by_hardware_id(db.session, id_hardware_jetson)
+        if not jetson:
+            return jsonify({"message": "Jetson Nano not found"}), 404
+
+        # CORRECTED: Using update method of the jetson_nano_crud instance
+        # Assuming update_data is a dictionary that can be directly passed to obj_in
+        updated_jetson = jetson_nano_crud.update(db.session, db_obj=jetson, obj_in=update_data) 
 
         if updated_jetson:
             return jsonify({
@@ -141,38 +168,39 @@ def update_jetson_nano_details(id_hardware_jetson: str):
             return jsonify({"message": "Jetson Nano not found or update failed"}), 404
     except Exception as e:
         logger.exception(f"Error updating Jetson Nano details for hardware ID: {id_hardware_jetson}")
-        db.rollback()
+        db.session.rollback()
         return jsonify({"message": f"Internal server error: {str(e)}"}), 500
-    finally:
-        db.close()
 
 @jetson_nanos_bp.route('/<string:id_hardware_jetson>', methods=['DELETE'])
-def delete_jetson_nano(id_hardware_jetson: str):
+def delete_jetson_nano_route(id_hardware_jetson: str):
     """
     Endpoint to delete a Jetson Nano device.
     """
-    db = next(get_db())
     try:
-        deleted_count = jetson_nano_service.delete_jetson_nano(db, id_hardware_jetson)
-        if deleted_count > 0:
-            return jsonify({"message": "Jetson Nano deleted successfully"}), 200
-        else:
+        # Fetch the existing JetsonNano object by hardware ID to get its primary ID
+        jetson_to_delete = jetson_nano_crud.get_by_hardware_id(db.session, id_hardware_jetson)
+        if not jetson_to_delete:
             return jsonify({"message": "Jetson Nano not found"}), 404
+
+        # CORRECTED: Using remove method of the jetson_nano_crud instance with the primary ID
+        deleted_jetson = jetson_nano_crud.remove(db.session, id=jetson_to_delete.id)
+        
+        if deleted_jetson: # remove method typically returns the removed object or None
+            return jsonify({"message": "Jetson Nano deleted successfully"}), 204 # 204 No Content
+        else:
+            return jsonify({"message": "Jetson Nano not found or deletion failed"}), 404
     except Exception as e:
         logger.exception(f"Error deleting Jetson Nano device for hardware ID: {id_hardware_jetson}")
-        db.rollback()
+        db.session.rollback()
         return jsonify({"message": f"Internal server error: {str(e)}"}), 500
-    finally:
-        db.close()
 
 @jetson_nanos_bp.route('/<string:id_hardware_jetson>/telemetry/recent', methods=['GET'])
 def get_recent_jetson_telemetry(id_hardware_jetson: str):
     """
     Endpoint to retrieve the most recent telemetry record for a specific Jetson Nano.
     """
-    db = next(get_db())
     try:
-        recent_telemetry = jetson_telemetry_service.get_recent_telemetry(db, id_hardware_jetson)
+        recent_telemetry = jetson_telemetry_service.get_recent_telemetry(db.session, id_hardware_jetson)
         if recent_telemetry:
             return jsonify({
                 "id": str(recent_telemetry.id),
@@ -190,8 +218,6 @@ def get_recent_jetson_telemetry(id_hardware_jetson: str):
     except Exception as e:
         logger.exception(f"Error retrieving recent telemetry for Jetson hardware ID: {id_hardware_jetson}")
         return jsonify({"message": f"Internal server error: {str(e)}"}), 500
-    finally:
-        db.close()
 
 @jetson_nanos_bp.route('/<string:id_hardware_jetson>/telemetry/history', methods=['GET'])
 def get_jetson_telemetry_history(id_hardware_jetson: str):
@@ -199,12 +225,11 @@ def get_jetson_telemetry_history(id_hardware_jetson: str):
     Endpoint to retrieve historical telemetry records for a specific Jetson Nano with pagination.
     Query parameters: skip (int), limit (int).
     """
-    db = next(get_db())
     try:
         skip = request.args.get('skip', 0, type=int)
         limit = request.args.get('limit', 100, type=int)
 
-        telemetry_history = jetson_telemetry_service.get_telemetry_history(db, id_hardware_jetson, skip=skip, limit=limit)
+        telemetry_history = jetson_telemetry_service.get_telemetry_history(db.session, id_hardware_jetson, skip=skip, limit=limit)
 
         if telemetry_history:
             formatted_history = []
@@ -226,17 +251,15 @@ def get_jetson_telemetry_history(id_hardware_jetson: str):
     except Exception as e:
         logger.exception(f"Error retrieving telemetry history for Jetson hardware ID: {id_hardware_jetson}")
         return jsonify({"message": f"Internal server error: {str(e)}"}), 500
-    finally:
-        db.close()
 
 @jetson_nanos_bp.route('/', methods=['GET'])
-def get_all_jetson_nanos():
+def get_all_jetson_nanos_route():
     """
     Endpoint to retrieve all registered Jetson Nano devices.
     """
-    db = next(get_db())
     try:
-        jetsons = jetson_nano_service.get_all_jetson_nanos(db)
+        # CORRECTED: Using get_multi method of the jetson_nano_crud instance
+        jetsons = jetson_nano_crud.get_multi(db.session) 
         if jetsons:
             formatted_jetsons = []
             for jetson in jetsons:
@@ -260,5 +283,3 @@ def get_all_jetson_nanos():
     except Exception as e:
         logger.exception("Error retrieving all Jetson Nano devices.")
         return jsonify({"message": f"Internal server error: {str(e)}"}), 500
-    finally:
-        db.close()

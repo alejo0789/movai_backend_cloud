@@ -45,6 +45,3 @@ pyzbar==0.1.9
 # Computer Vision
 opencv-python==4.9.0.80
 numpy==1.24.3
-
-# Additional utilities for your specific use case
-uuid==1.30

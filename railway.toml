@@ -5,9 +5,9 @@ builder = "nixpacks"
 PYTHON_VERSION = "3.11"
 
 [start]
-cmd = "python app.py"
+cmd = "python main.py"
 
 [variables]
 PORT = "5000"
-FLASK_APP = "app.py"
+FLASK_APP = "main.py"
 FLASK_ENV = "production"

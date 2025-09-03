@@ -20,7 +20,7 @@ def create_app():
     Función principal para crear y configurar la aplicación Flask.
     """
     app = Flask(__name__)
-    CORS(app, supports_credentials=True, origins=["http://localhost:3000"])
+    CORS(app, supports_credentials=True, origins=["http://localhost:3000", "https://movai-production-bd1b.up.railway.app"])
     # --- Configuración de la aplicación ---
     # Carga las configuraciones desde el objeto settings
     app.config["SQLALCHEMY_DATABASE_URI"] = settings.DATABASE_URL

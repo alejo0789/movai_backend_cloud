@@ -15,3 +15,6 @@ FLASK_ENV = "production"
 
 [packages]
 apt = ["libgl1-mesa-glx", "libsm6", "libxext6"]
+[build]
+# Specify the build directory. '.' means the root of the project.
+build_dir = "."

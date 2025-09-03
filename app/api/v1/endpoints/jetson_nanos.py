@@ -55,89 +55,134 @@ def receive_jetson_telemetry():
         logger.exception("Error receiving or processing Jetson telemetry data.")
         db.session.rollback()
         return jsonify({"message": f"Internal server error: {str(e)}"}), 500
-
-@jetson_nanos_bp.route('/', methods=['POST'])
-def register_jetson_nano():
+    
+@jetson_nanos_bp.route('/', methods=['GET'])
+def get_all_jetson_nanos_route():
     """
-    Endpoint to register a new Jetson Nano device.
-    Expects a JSON payload with Jetson Nano details.
+    Endpoint to retrieve all registered Jetson Nano devices with bus information.
+    Query parameters: skip (int), limit (int).
     """
     try:
-        jetson_data = request.get_json()
-        if not jetson_data:
-            return jsonify({"message": "Invalid JSON data provided"}), 400
+        skip = request.args.get('skip', 0, type=int)
+        limit = request.args.get('limit', 100, type=int)
 
-        # Ensure id_bus is a valid UUID if provided
-        id_bus_val = None
-        if 'id_bus' in jetson_data and jetson_data['id_bus']:
-            try:
-                id_bus_val = uuid.UUID(jetson_data['id_bus'])
-            except ValueError:
-                return jsonify({"message": "Invalid UUID format for id_bus"}), 400
+        # Get all Jetson Nanos with pagination
+        jetsons = jetson_nano_crud.get_multi(db.session, skip=skip, limit=limit)
         
-        # Ensure fecha_instalacion is a valid datetime if provided
-        fecha_instalacion_val = None
-        if 'fecha_instalacion' in jetson_data and jetson_data['fecha_instalacion']:
-            try:
-                fecha_instalacion_val = datetime.fromisoformat(jetson_data['fecha_instalacion'])
-            except ValueError:
-                return jsonify({"message": "Invalid datetime format for fecha_instalacion"}), 400
+        if jetsons:
+            formatted_jetsons = []
+            for jetson in jetsons:
+                # Get bus information if assigned
+                bus_info = None
+                if jetson.id_bus and jetson.bus:
+                    bus_info = {
+                        "placa": jetson.bus.placa,
+                        "numero_interno": jetson.bus.numero_interno,
+                        "marca": jetson.bus.marca,
+                        "modelo": jetson.bus.modelo,
+                        "estado_operativo": jetson.bus.estado_operativo
+                    }
 
-        new_jetson = create_or_update_jetson_nano(
-            db.session, 
-            id_hardware_jetson=jetson_data.get('id_hardware_jetson'),
-            id_bus=id_bus_val,
-            version_firmware=jetson_data.get('version_firmware'),
-            estado_salud=jetson_data.get('estado_salud'),
-            fecha_instalacion=fecha_instalacion_val,
-            activo=jetson_data.get('activo', True),
-            observaciones=jetson_data.get('observaciones')
-        )
+                # Determine connection status based on last connection
+                estado_conexion = "Desconectado"
+                if jetson.activo:
+                    if jetson.ultima_conexion_cloud_at:
+                        # Check if last connection was within 10 minutes
+                        time_diff = datetime.utcnow() - jetson.ultima_conexion_cloud_at
+                        print(datetime.utcnow())
+                        print(jetson.ultima_conexion_cloud_at)
+                        print(time_diff)
+                        if time_diff.total_seconds() <= 600:  # 10 minutes
+                            estado_conexion = "Conectado"
+                        else:
+                            estado_conexion = "Desconectado"
+                    else:
+                        estado_conexion = "Desconectado"
+                else:
+                    estado_conexion = "Mantenimiento"
 
-        if new_jetson:
-            return jsonify({
-                "message": "Jetson Nano registered successfully",
-                "jetson_id": str(new_jetson.id),
-                "id_hardware_jetson": new_jetson.id_hardware_jetson
-            }), 201
+                formatted_jetson = {
+                    "id": str(jetson.id),
+                    "id_hardware_jetson": jetson.id_hardware_jetson,
+                    "id_bus": str(jetson.id_bus) if jetson.id_bus else None,
+                    "version_firmware": jetson.version_firmware,
+                    "estado_salud": jetson.estado_salud,
+                    "estado_conexion": estado_conexion,  # Calculated connection status
+                    "ultima_actualizacion_firmware_at": jetson.ultima_actualizacion_firmware_at.isoformat() if jetson.ultima_actualizacion_firmware_at else None,
+                    "ultima_conexion_cloud_at": jetson.ultima_conexion_cloud_at.isoformat() if jetson.ultima_conexion_cloud_at else None,
+                    "last_telemetry_at": jetson.last_telemetry_at.isoformat() if jetson.last_telemetry_at else None,
+                    "fecha_instalacion": jetson.fecha_instalacion.isoformat() if jetson.fecha_instalacion else None,
+                    "activo": jetson.activo,
+                    "observaciones": jetson.observaciones,
+                    "last_updated_at": jetson.last_updated_at.isoformat(),
+                    "bus_info": bus_info  # Include bus information directly
+                }
+                formatted_jetsons.append(formatted_jetson)
+            
+            return jsonify(formatted_jetsons), 200
         else:
-            return jsonify({"message": "Failed to register Jetson Nano"}), 500
-    except IntegrityError:
-        db.session.rollback()
-        return jsonify({"message": "Jetson Nano with this hardware ID already exists or invalid data"}), 409
+            return jsonify([]), 200
     except Exception as e:
-        logger.exception("Error registering Jetson Nano device.")
-        db.session.rollback()
+        logger.exception("Error retrieving all Jetson Nano devices.")
         return jsonify({"message": f"Internal server error: {str(e)}"}), 500
 
+# También actualizar el endpoint individual para mantener consistencia
 @jetson_nanos_bp.route('/<string:id_hardware_jetson>', methods=['GET'])
 def get_jetson_nano_details(id_hardware_jetson: str):
     """
     Endpoint to retrieve details of a specific Jetson Nano device by its hardware ID.
     """
     try:
-        # CORRECTED: Using the jetson_nano_crud instance
-        jetson = jetson_nano_crud.get_by_hardware_id(db.session, id_hardware_jetson) 
+        # Get Jetson with bus relationship loaded
+        jetson = jetson_nano_crud.get_by_hardware_id(db.session, id_hardware_jetson)
         if jetson:
+            # Get bus information if assigned
+            bus_info = None
+            if jetson.id_bus and jetson.bus:
+                bus_info = {
+                    "placa": jetson.bus.placa,
+                    "numero_interno": jetson.bus.numero_interno,
+                    "marca": jetson.bus.marca,
+                    "modelo": jetson.bus.modelo,
+                    "estado_operativo": jetson.bus.estado_operativo
+                }
+
+            # Determine connection status
+            estado_conexion = "Desconectado"
+            if jetson.activo:
+                if jetson.ultima_conexion_cloud_at:
+                    time_diff = datetime.utcnow() - jetson.ultima_conexion_cloud_at
+                    if time_diff.total_seconds() <= 600:  # 10 minutes
+                        estado_conexion = "Conectado"
+                    else:
+                        estado_conexion = "Desconectado"
+                else:
+                    estado_conexion = "Desconectado"
+            else:
+                estado_conexion = "Mantenimiento"
+
             return jsonify({
                 "id": str(jetson.id),
                 "id_hardware_jetson": jetson.id_hardware_jetson,
                 "id_bus": str(jetson.id_bus) if jetson.id_bus else None,
                 "version_firmware": jetson.version_firmware,
                 "estado_salud": jetson.estado_salud,
+                "estado_conexion": estado_conexion,
                 "ultima_actualizacion_firmware_at": jetson.ultima_actualizacion_firmware_at.isoformat() if jetson.ultima_actualizacion_firmware_at else None,
                 "ultima_conexion_cloud_at": jetson.ultima_conexion_cloud_at.isoformat() if jetson.ultima_conexion_cloud_at else None,
                 "last_telemetry_at": jetson.last_telemetry_at.isoformat() if jetson.last_telemetry_at else None,
                 "fecha_instalacion": jetson.fecha_instalacion.isoformat() if jetson.fecha_instalacion else None,
                 "activo": jetson.activo,
                 "observaciones": jetson.observaciones,
-                "last_updated_at": jetson.last_updated_at.isoformat()
+                "last_updated_at": jetson.last_updated_at.isoformat(),
+                "bus_info": bus_info
             }), 200
         else:
             return jsonify({"message": "Jetson Nano not found"}), 404
     except Exception as e:
         logger.exception(f"Error retrieving Jetson Nano details for hardware ID: {id_hardware_jetson}")
         return jsonify({"message": f"Internal server error: {str(e)}"}), 500
+                
 
 @jetson_nanos_bp.route('/<string:id_hardware_jetson>', methods=['PUT'])
 def update_jetson_nano_details(id_hardware_jetson: str):
@@ -251,35 +296,64 @@ def get_jetson_telemetry_history(id_hardware_jetson: str):
     except Exception as e:
         logger.exception(f"Error retrieving telemetry history for Jetson hardware ID: {id_hardware_jetson}")
         return jsonify({"message": f"Internal server error: {str(e)}"}), 500
+@jetson_nanos_bp.route('/<string:id_hardware_jetson>/heartbeat', methods=['POST'])
 
-@jetson_nanos_bp.route('/', methods=['GET'])
-def get_all_jetson_nanos_route():
+
+def jetson_heartbeat(id_hardware_jetson: str):
     """
-    Endpoint to retrieve all registered Jetson Nano devices.
+    Endpoint para que las Jetson Nanos envíen un "latido" indicando que están activas.
+    Actualiza ultima_conexion_cloud_at sin necesidad de enviar telemetría completa.
     """
     try:
-        # CORRECTED: Using get_multi method of the jetson_nano_crud instance
-        jetsons = jetson_nano_crud.get_multi(db.session) 
-        if jetsons:
-            formatted_jetsons = []
-            for jetson in jetsons:
-                formatted_jetsons.append({
-                    "id": str(jetson.id),
-                    "id_hardware_jetson": jetson.id_hardware_jetson,
-                    "id_bus": str(jetson.id_bus) if jetson.id_bus else None,
-                    "version_firmware": jetson.version_firmware,
-                    "estado_salud": jetson.estado_salud,
-                    "ultima_actualizacion_firmware_at": jetson.ultima_actualizacion_firmware_at.isoformat() if jetson.ultima_actualizacion_firmware_at else None,
-                    "ultima_conexion_cloud_at": jetson.ultima_conexion_cloud_at.isoformat() if jetson.ultima_conexion_cloud_at else None,
-                    "last_telemetry_at": jetson.last_telemetry_at.isoformat() if jetson.last_telemetry_at else None,
-                    "fecha_instalacion": jetson.fecha_instalacion.isoformat() if jetson.fecha_instalacion else None,
-                    "activo": jetson.activo,
-                    "observaciones": jetson.observaciones,
-                    "last_updated_at": jetson.last_updated_at.isoformat()
-                })
-            return jsonify(formatted_jetsons), 200
-        else:
-            return jsonify([]), 200
+        # Find the Jetson device
+        jetson = jetson_nano_crud.get_by_hardware_id(db.session, id_hardware_jetson)
+        if not jetson:
+            return jsonify({"message": "Jetson Nano not found"}), 404
+
+        # Update last connection time
+        jetson.ultima_conexion_cloud_at = datetime.utcnow()
+        
+        # Optionally update health status if provided
+        request_data = request.get_json()
+        if request_data and 'estado_salud' in request_data:
+            jetson.estado_salud = request_data['estado_salud']
+        
+        db.session.add(jetson)
+        db.session.commit()
+        db.session.refresh(jetson)
+
+        logger.info(f"Heartbeat received from Jetson {id_hardware_jetson}")
+        
+        return jsonify({
+            "message": "Heartbeat received successfully",
+            "ultima_conexion_cloud_at": jetson.ultima_conexion_cloud_at.isoformat(),
+            "estado_conexion": determine_connection_status(jetson)
+        }), 200
+        
     except Exception as e:
-        logger.exception("Error retrieving all Jetson Nano devices.")
+        logger.exception(f"Error processing heartbeat for Jetson hardware ID: {id_hardware_jetson}")
+        db.session.rollback()
         return jsonify({"message": f"Internal server error: {str(e)}"}), 500
+
+def determine_connection_status(jetson: JetsonNano) -> str:
+    """
+    Determina el estado de conexión basado en los datos del Jetson
+    
+    Args:
+        jetson (JetsonNano): Objeto JetsonNano de la base de datos
+    
+    Returns:
+        str: Estado de conexión ('Conectado', 'Desconectado', 'Mantenimiento')
+    """
+    if not jetson.activo:
+        return "Mantenimiento"
+    
+    if jetson.ultima_conexion_cloud_at:
+        # Check if last connection was within 10 minutes
+        time_diff = datetime.utcnow() - jetson.ultima_conexion_cloud_at
+        if time_diff.total_seconds() <= 600:  # 10 minutes = 600 seconds
+            return "Conectado"
+        else:
+            return "Desconectado"
+    else:
+        return "Desconectado"

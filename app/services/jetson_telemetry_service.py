@@ -28,19 +28,8 @@ class JetsonTelemetryService:
     def process_telemetry_data(self, db: Session, telemetry_data: Dict[str, Any]) -> Optional[JetsonTelemetry]:
         """
         Procesa los datos de telemetría entrantes de una Jetson Nano.
-        Guarda el registro de telemetría y actualiza la marca de tiempo last_telemetry_at
-        en la entrada del dispositivo JetsonNano correspondiente.
-
-        Args:
-            db (Session): La sesión de la base de datos.
-            telemetry_data (Dict[str, Any]): Diccionario con los datos de telemetría.
-                                              Esperado: id_hardware_jetson (str),
-                                                        timestamp_telemetry (str ISO o datetime),
-                                                        ram_usage_gb, cpu_usage_percent, disk_usage_gb,
-                                                        disk_usage_percent, temperatura_celsius.
-
-        Returns:
-            Optional[JetsonTelemetry]: El objeto JetsonTelemetry creado, o None si la validación falla.
+        Guarda el registro de telemetría y actualiza las marcas de tiempo last_telemetry_at 
+        y ultima_conexion_cloud_at en la entrada del dispositivo JetsonNano correspondiente.
         """
         logger.info(f"Processing telemetry data for Jetson hardware ID: {telemetry_data.get('id_hardware_jetson')}")
 
@@ -64,48 +53,49 @@ class JetsonTelemetryService:
         elif 'timestamp_telemetry' not in telemetry_data:
             telemetry_data['timestamp_telemetry'] = datetime.utcnow()
 
-        # Define the expected fields for JetsonTelemetry model
-        expected_telemetry_fields = [
-            'id_hardware_jetson',
-            'timestamp_telemetry',
-            'ram_usage_gb',
-            'cpu_usage_percent',
-            'disk_usage_gb',
-            'disk_usage_percent',
-            'temperatura_celsius'
-        ]
+        # Convert numeric fields
+        for field in ['ram_usage_gb', 'cpu_usage_percent', 'disk_usage_gb', 'disk_usage_percent', 'temperatura_celsius']:
+            if field in telemetry_data and isinstance(telemetry_data[field], str):
+                try:
+                    telemetry_data[field] = float(telemetry_data[field])
+                except ValueError:
+                    telemetry_data[field] = None # Set to None if conversion fails
 
-        # Filter telemetry_data to only include expected fields
-        filtered_telemetry_data = {
-            key: telemetry_data[key] for key in expected_telemetry_fields if key in telemetry_data
+        # IMPORTANTE: Filtrar solo los campos que existen en el modelo JetsonTelemetry de la nube
+        cloud_telemetry_fields = {
+            'id_hardware_jetson': telemetry_data.get('id_hardware_jetson'),
+            'timestamp_telemetry': telemetry_data.get('timestamp_telemetry'),
+            'ram_usage_gb': telemetry_data.get('ram_usage_gb'),
+            'cpu_usage_percent': telemetry_data.get('cpu_usage_percent'),
+            'disk_usage_gb': telemetry_data.get('disk_usage_gb'),
+            'disk_usage_percent': telemetry_data.get('disk_usage_percent'),
+            'temperatura_celsius': telemetry_data.get('temperatura_celsius')
         }
 
-        # Convert numeric fields in the filtered data
-        for field in ['ram_usage_gb', 'cpu_usage_percent', 'disk_usage_gb', 'disk_usage_percent', 'temperatura_celsius']:
-            if field in filtered_telemetry_data and isinstance(filtered_telemetry_data[field], str):
-                try:
-                    filtered_telemetry_data[field] = float(filtered_telemetry_data[field])
-                except ValueError:
-                    filtered_telemetry_data[field] = None # Set to None if conversion fails
+        # Remover cualquier campo que sea None o que no deba estar en el modelo de la nube
+        cloud_telemetry_data = {k: v for k, v in cloud_telemetry_fields.items() if v is not None}
 
         try:
-            # Create the new telemetry record using the filtered data
-            new_telemetry_record = jetson_telemetry_crud.create(db, filtered_telemetry_data)
+            # Create the new telemetry record usando solo los campos válidos
+            new_telemetry_record = jetson_telemetry_crud.create(db, cloud_telemetry_data)
 
-            # Update the last_telemetry_at in the JetsonNano device
+            # Update BOTH last_telemetry_at AND ultima_conexion_cloud_at in the JetsonNano device
             jetson_device = jetson_nano_crud.get_by_hardware_id(db, id_hardware_jetson)
             if jetson_device:
-                jetson_device.last_telemetry_at = new_telemetry_record.timestamp_telemetry # Use the timestamp from the telemetry data
+                current_time = datetime.utcnow()
+                jetson_device.last_telemetry_at = new_telemetry_record.timestamp_telemetry
+                jetson_device.ultima_conexion_cloud_at = current_time  # IMPORTANTE: Actualizar conexión
+                
                 db.add(jetson_device)
-                db.commit() # Commit changes to JetsonNano
+                db.commit()
                 db.refresh(jetson_device)
-                logger.info(f"Updated last_telemetry_at for JetsonNano '{id_hardware_jetson}'.")
+                logger.info(f"Updated last_telemetry_at and ultima_conexion_cloud_at for JetsonNano '{id_hardware_jetson}'.")
             else:
-                logger.warning(f"JetsonNano device with hardware ID '{id_hardware_jetson}' not found. Cannot update last_telemetry_at.")
+                logger.warning(f"JetsonNano device with hardware ID '{id_hardware_jetson}' not found. Cannot update timestamps.")
 
             # Commit changes for the new_telemetry_record (if not already committed by create)
             db.commit() 
-            db.refresh(new_telemetry_record) # Refresh to get any DB-generated defaults/updates
+            db.refresh(new_telemetry_record)
 
             logger.info(f"Telemetry record (ID: {new_telemetry_record.id}) processed successfully for Jetson '{id_hardware_jetson}'.")
             return new_telemetry_record
@@ -118,19 +108,25 @@ class JetsonTelemetryService:
         """
         Recupera el registro de telemetría más reciente para un Jetson Nano específico.
         """
-        logger.info(f"Fetching recent telemetry for Jetson hardware ID: {id_hardware_jetson}")
-        telemetry = jetson_telemetry_crud.get_recent_telemetry_for_jetson(db, id_hardware_jetson)
-        if not telemetry:
-            logger.warning(f"No recent telemetry found for Jetson hardware ID '{id_hardware_jetson}'.")
-        return telemetry
+        logger.info(f"Recuperando telemetría reciente para Jetson hardware ID: {id_hardware_jetson}.")
+        try:
+            # Usar el método correcto del CRUD
+            return jetson_telemetry_crud.get_recent_telemetry_for_jetson(db, id_hardware_jetson)
+        except Exception as e:
+            logger.error(f"Error recuperando telemetría reciente para Jetson '{id_hardware_jetson}': {e}", exc_info=True)
+            return None
 
     def get_telemetry_history(self, db: Session, id_hardware_jetson: str, skip: int = 0, limit: int = 100) -> List[JetsonTelemetry]:
         """
-        Recupera un historial de registros de telemetría para un Jetson Nano específico con paginación.
+        Recupera el historial de telemetría para un Jetson Nano específico con paginación.
         """
-        logger.info(f"Fetching telemetry history for Jetson hardware ID: {id_hardware_jetson} (skip={skip}, limit={limit})")
-        telemetry_history = jetson_telemetry_crud.get_telemetry_by_hardware_id(db, id_hardware_jetson, skip=skip, limit=limit)
-        return telemetry_history
+        logger.info(f"Recuperando historial de telemetría para Jetson hardware ID: {id_hardware_jetson} (skip={skip}, limit={limit}).")
+        try:
+            # Usar el método correcto del CRUD
+            return jetson_telemetry_crud.get_telemetry_by_hardware_id(db, id_hardware_jetson, skip=skip, limit=limit)
+        except Exception as e:
+            logger.error(f"Error recuperando historial de telemetría para Jetson '{id_hardware_jetson}': {e}", exc_info=True)
+            return []
 
 
 # Create an instance of JetsonTelemetryService
